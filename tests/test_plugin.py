@@ -192,8 +192,9 @@ def test_load_initial_conftests_starts_managed_coverage_early(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     config = _DummyConfig(tmp_path)
+    abs_source = tmp_path.resolve() / "src/pkg/foo.py"
     result = mapping.MappingResult(
-        affected_sources=[Path("src/pkg/foo.py")],
+        affected_sources=[abs_source],
         affected_tests=[],
         missing_tests=[],
     )
