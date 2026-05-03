@@ -9,7 +9,6 @@ import pytest
 from pytest_cov_affected import coverage_scope, git, mapping
 
 
-
 _STATE_KEY = "_cov_affected_state"
 
 
@@ -59,9 +58,7 @@ def _create_cov_affected_state(config: pytest.Config) -> _State:  # pragma: no c
         include_untracked=include_untracked,
     )
     abs_sources = [repo_root / source for source in sources]
-    result = mapping.map_to_tests(
-        abs_sources, src_root=src_root, tests_root=tests_root
-    )
+    result = mapping.map_to_tests(abs_sources, src_root=src_root, tests_root=tests_root)
 
     state = _State(
         repo_root=repo_root,
@@ -295,6 +292,7 @@ def _sync_pytest_cov_terminal_report(
     if not _managed_cov_report_requested(state.cov_report):
         return
 
+    sync_cov_report: dict[str, Any] = state.cov_report  # type: ignore[assignment]
     repo_root = state.repo_root
     abs_sources = list(state.result.affected_sources)
     report_cov = coverage.Coverage(
@@ -308,11 +306,11 @@ def _sync_pytest_cov_terminal_report(
         pass
 
     options: dict[str, Any] = {
-        "show_missing": "term-missing" in state.cov_report or None,
+        "show_missing": "term-missing" in sync_cov_report or None,
         "ignore_errors": True,
         "file": StringIO(),
     }
-    skip_covered = "skip-covered" in state.cov_report.values()
+    skip_covered = "skip-covered" in sync_cov_report.values()
     if skip_covered:
         options["skip_covered"] = True
 

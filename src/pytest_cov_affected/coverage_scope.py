@@ -57,11 +57,11 @@ def apply(
                 patterns.append(pattern)
                 seen.add(pattern)
     config = coverage_obj.config
-    config.include = list(patterns)
+    config.include = list(patterns)  # type: ignore[attr-defined]
     config.run_include = list(patterns)
     config.report_include = list(patterns)
     config.source = None
-    config.run_source = None
+    config.run_source = None  # type: ignore[attr-defined]
 
 
 def _abs_set(affected_sources: list[Path], data_root: Path) -> set[str]:
