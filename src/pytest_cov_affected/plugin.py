@@ -4,13 +4,10 @@ from __future__ import annotations
 import warnings
 from io import StringIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 import pytest
 from pytest_cov_affected import coverage_scope, git, mapping
 
-
-if TYPE_CHECKING:
-    import pytest
 
 
 _STATE_KEY = "_cov_affected_state"
@@ -50,8 +47,8 @@ def _create_cov_affected_state(config: pytest.Config) -> _State:  # pragma: no c
         return state
 
     repo_root = Path(str(config.rootpath)).resolve()
-    src_root = Path(config.getoption("--cov-affected-src-root"))
-    tests_root = Path(config.getoption("--cov-affected-tests-root"))
+    src_root = (repo_root / config.getoption("--cov-affected-src-root")).resolve()
+    tests_root = (repo_root / config.getoption("--cov-affected-tests-root")).resolve()
     base = config.getoption("--cov-affected-base")
     include_untracked = config.getoption("--cov-affected-include-untracked")
 
@@ -86,6 +83,8 @@ def _activate_cov_affected_coverage(
     config: pytest.Config, state: _State
 ) -> None:  # pragma: no cover
     """Apply affected-path filtering to the active coverage session."""
+    if state.cov_obj is not None:
+        return
     cov_objs = _find_pytest_cov_coverage_objects(config)
     state.cov_objs = list(cov_objs)
     repo_root = state.repo_root
@@ -154,8 +153,9 @@ def _finalize_coverage_outputs(state: _State) -> None:  # pragma: no cover
         if candidate.exists():
             coverage_scope.finalize(candidate, abs_sources, data_root=repo_root)
 
-    sidecar = repo_root / ".coveragerc.affected"
-    coverage_scope.write_sidecar_rcfile(sidecar, abs_sources)
+    if abs_sources:
+        sidecar = repo_root / ".coveragerc.affected"
+        coverage_scope.write_sidecar_rcfile(sidecar, abs_sources)
 
 
 def _finalize_coverage_state(state: _State) -> None:  # pragma: no cover
@@ -467,12 +467,6 @@ def pytest_terminal_summary(
         f"pytest-cov-affected: {n_modules} modules affected, "
         f"{n_tests} tests selected, {n_missing} modules without tests",
     )
-
-
-@pytest.hookimpl(hookwrapper=True, trylast=True)
-def pytest_runtestloop(session: pytest.Session) -> None:  # pragma: no cover
-    """Let runtestloop complete; finalization happens at session finish."""
-    yield
 
 
 def pytest_sessionfinish(

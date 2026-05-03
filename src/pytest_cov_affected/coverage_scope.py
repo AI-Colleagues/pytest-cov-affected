@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
-from coverage.sqldata import CoverageData
+from coverage import CoverageData
 
 
 if TYPE_CHECKING:
@@ -236,6 +236,8 @@ def write_sidecar_rcfile(
     extra_exclude_lines: list[str] | None = None,
 ) -> None:  # pragma: no cover
     """Write a .coveragerc.affected sidecar file scoped to the affected sources."""
+    if not affected_sources:
+        return
     include_block = "\n    ".join(str(p) for p in affected_sources)
     exclude_lines = list(
         extra_exclude_lines

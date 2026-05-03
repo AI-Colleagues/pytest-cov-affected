@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
-from coverage.sqldata import CoverageData
+from coverage import CoverageData
 from pytest_cov_affected import coverage_scope
 from pytest_cov_affected.coverage_scope import finalize
 
