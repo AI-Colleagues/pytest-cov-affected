@@ -1159,8 +1159,12 @@ wheels = [
 
 [[package]]
 name = "pytest-cov-affected"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "coverage" },
+    { name = "pytest" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1185,6 +1189,10 @@ docs = [
 ]
 
 [package.metadata]
+requires-dist = [
+    { name = "coverage", specifier = ">=7" },
+    { name = "pytest", specifier = ">=8" },
+]
 
 [package.metadata.requires-dev]
 dev = [

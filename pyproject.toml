@@ -25,12 +25,18 @@ docs = [
 ]
 
 [project]
-dependencies = []
-description = "Add your description here"
+dependencies = [
+  "coverage>=7",
+  "pytest>=8"
+]
+description = "Run pytest and report coverage only for git-affected modules."
 name = "pytest-cov-affected"
 readme = "README.md"
 requires-python = ">=3.12"
-version = "0.0.1"
+version = "0.1.0"
+
+[project.entry-points.pytest11]
+cov_affected = "pytest_cov_affected.plugin"
 
 [project.urls]
 Homepage = "https://github.com/AI-Colleagues/pytest-cov-affected"
@@ -109,7 +115,7 @@ no-lines-before = ["future", "standard-library", "third-party", "first-party", "
 max-complexity = 10
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["D"]
+"tests/**" = ["D", "E501"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
