@@ -5,11 +5,6 @@ import subprocess
 from pathlib import Path
 
 
-_IGNORED_AFFECTED_SOURCES = {
-    Path("src/pytest_cov_affected/main.py"),
-}
-
-
 def _run_git(args: list[str], *, cwd: Path) -> str:
     result = subprocess.run(
         ["git", *args],
@@ -51,8 +46,6 @@ def _filter_affected_sources(
         if not entry or not entry.endswith(".py"):
             continue
         if not entry.startswith(src_prefix):
-            continue
-        if Path(entry) in _IGNORED_AFFECTED_SOURCES:
             continue
         candidate = repo_root / entry
         if not candidate.exists():

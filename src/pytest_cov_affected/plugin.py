@@ -31,6 +31,7 @@ class _State:
         self.result = result
         self.cov_report: Any | None = None
         self.cov_obj: Any | None = None
+        self.cov_objs: list[Any] = []
         self.managed_cov: Any | None = None
         self.finalized = False
 
@@ -62,9 +63,6 @@ def _coverage_data_file_candidates(state: _State) -> list[Path]:
 
 def _finalize_coverage_outputs(state: _State) -> None:
     """Rewrite any discovered coverage data files and write the sidecar rcfile."""
-    if not state.result.affected_sources:
-        return
-
     repo_root = state.repo_root
     abs_sources = [repo_root / s for s in state.result.affected_sources]
 
@@ -190,6 +188,65 @@ def _write_managed_coverage_report(terminalreporter: Any, state: _State) -> None
     )
 
 
+def _sync_pytest_cov_terminal_report(config: pytest.Config, state: _State) -> None:
+    """Replace pytest-cov's cached terminal report with the pruned version."""
+    import coverage
+
+    cov_plugin = config.pluginmanager.getplugin("_cov")
+    if cov_plugin is None:
+        return
+
+    cov_report = getattr(cov_plugin, "cov_report", None)
+    if cov_report is None:
+        return
+    if not _managed_cov_report_requested(state.cov_report):
+        return
+
+    repo_root = state.repo_root
+    abs_sources = [repo_root / s for s in state.result.affected_sources]
+    report_cov = coverage.Coverage(
+        data_file=str(repo_root / ".coverage"),
+        config_file=True,
+    )
+    coverage_scope.apply(report_cov, abs_sources, data_root=repo_root)
+    try:
+        report_cov.load()
+    except Exception:
+        pass
+
+    options: dict[str, Any] = {
+        "show_missing": "term-missing" in state.cov_report or None,
+        "ignore_errors": True,
+        "file": StringIO(),
+    }
+    skip_covered = "skip-covered" in state.cov_report.values()
+    if skip_covered:
+        options["skip_covered"] = True
+
+    total: float | None
+    try:
+        total = report_cov.report(**options)
+    except Exception:
+        total = 0.0
+        options["file"].seek(0)
+        options["file"].truncate(0)
+
+    report_text = options["file"].getvalue()
+    if report_text:
+        report_text = "---------- coverage: ----------\n" + report_text
+    try:
+        cov_report.seek(0)
+        cov_report.truncate(0)
+        cov_report.write(report_text)
+    except Exception:
+        pass
+
+    try:
+        cov_plugin.cov_total = total
+    except Exception:
+        pass
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Register the --cov-affected CLI options."""
     group = parser.getgroup("cov-affected", "pytest-cov-affected")
@@ -239,6 +296,10 @@ def pytest_configure(config: pytest.Config) -> None:
     base = config.getoption("--cov-affected-base")
     include_untracked = config.getoption("--cov-affected-include-untracked")
 
+    cov_source = getattr(config.option, "cov_source", None)
+    if not cov_source:
+        config.option.cov_source = [str((repo_root / src_root).resolve())]
+
     sources = git.affected_sources(
         repo_root=repo_root,
         src_root=src_root,
@@ -263,7 +324,8 @@ def pytest_configure(config: pytest.Config) -> None:
             stacklevel=1,
         )
 
-    cov_objs = _find_active_coverage_objects(config)
+    cov_objs = _find_pytest_cov_coverage_objects(config)
+    state.cov_objs = list(cov_objs)
     for cov_obj in cov_objs:
         coverage_scope.apply(
             cov_obj,
@@ -273,15 +335,27 @@ def pytest_configure(config: pytest.Config) -> None:
     if cov_objs:
         state.cov_obj = cov_objs[0]
     elif result.affected_sources:
-        managed_cov = _start_managed_coverage(
-            repo_root, [repo_root / s for s in result.affected_sources]
-        )
-        state.managed_cov = managed_cov
-        state.cov_obj = managed_cov
+        current_cov = _current_coverage_object()
+        if current_cov is not None:
+            coverage_scope.apply(
+                current_cov,
+                [repo_root / s for s in result.affected_sources],
+                data_root=repo_root,
+            )
+            state.managed_cov = current_cov
+            state.cov_obj = current_cov
+            state.cov_objs = [current_cov]
+        else:
+            managed_cov = _start_managed_coverage(
+                repo_root, [repo_root / s for s in result.affected_sources]
+            )
+            state.managed_cov = managed_cov
+            state.cov_obj = managed_cov
+            state.cov_objs = [managed_cov]
 
 
-def _find_active_coverage_objects(config: pytest.Config) -> list[Any]:
-    """Locate active coverage.Coverage instances, preferring pytest-cov's."""
+def _find_pytest_cov_coverage_objects(config: pytest.Config) -> list[Any]:
+    """Locate coverage.Coverage instances owned by pytest-cov."""
     objects: list[Any] = []
     cov_plugin = config.pluginmanager.getplugin("_cov")
     if cov_plugin is not None:
@@ -291,17 +365,17 @@ def _find_active_coverage_objects(config: pytest.Config) -> list[Any]:
                 cov = getattr(controller, attr, None)
                 if cov is not None and cov not in objects:
                     objects.append(cov)
+    return objects
 
-    if objects:
-        return objects
 
+def _current_coverage_object() -> Any | None:
+    """Return the process-wide active coverage object, if any."""
     try:
         import coverage
     except ImportError:
-        return []
+        return None
 
-    current = coverage.Coverage.current()
-    return [current] if current is not None else []
+    return coverage.Coverage.current()
 
 
 def pytest_collection_modifyitems(
@@ -349,13 +423,8 @@ def pytest_terminal_summary(
 
 @pytest.hookimpl(hookwrapper=True, trylast=True)
 def pytest_runtestloop(session: pytest.Session) -> None:
-    """Finalize coverage data before pytest-cov renders its terminal report."""
+    """Let runtestloop complete; finalization happens at session finish."""
     yield
-    config = session.config
-    state: _State | None = getattr(config, _STATE_KEY, None)
-    if state is None:
-        return
-    _finalize_coverage_state(state)
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
@@ -365,3 +434,4 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if state is None:
         return
     _finalize_coverage_state(state)
+    _sync_pytest_cov_terminal_report(config, state)

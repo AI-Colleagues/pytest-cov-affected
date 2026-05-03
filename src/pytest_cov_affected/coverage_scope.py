@@ -71,6 +71,17 @@ def _abs_set(affected_sources: list[Path], data_root: Path) -> set[str]:
     return out
 
 
+def _normalize_measured_files(
+    coverage_data: CoverageData, *, data_root: Path
+) -> dict[str, str]:
+    """Return measured files keyed by normalized absolute path."""
+    measured: dict[str, str] = {}
+    for filename in coverage_data.measured_files():
+        filename_abs = _resolve_path(Path(filename), data_root=data_root)
+        measured[filename_abs] = filename
+    return measured
+
+
 def _coverage_file_rows(
     data_file: Path, *, data_root: Path, keep_abs: set[str]
 ) -> tuple[set[str], list[int]] | None:
@@ -141,6 +152,46 @@ def _materialize_missing_files(data_file: Path, missing_files: list[str]) -> Non
     coverage_data.write()
 
 
+def prune_data(
+    coverage_data: CoverageData,
+    affected_sources: list[Path],
+    *,
+    data_root: Path | None = None,
+) -> None:
+    """Prune a CoverageData object down to the affected sources in place."""
+    if data_root is None:
+        data_root = Path.cwd()
+
+    keep_abs = _abs_set(affected_sources, data_root)
+    measured = _normalize_measured_files(coverage_data, data_root=data_root)
+    drop_files = [
+        measured_abs for measured_abs in measured if measured_abs not in keep_abs
+    ]
+    if drop_files:
+        coverage_data.purge_files(drop_files)
+
+    missing_files: list[str] = []
+    seen_missing: set[str] = set()
+    for source in affected_sources:
+        source_abs = _resolve_path(source, data_root=data_root)
+        if source_abs in measured:
+            continue
+        if source_abs not in seen_missing:
+            missing_files.append(source_abs)
+            seen_missing.add(source_abs)
+
+    if not missing_files:
+        return
+
+    if coverage_data.has_arcs():
+        coverage_data.touch_files(missing_files)
+    else:
+        try:
+            coverage_data.add_lines({filename: set() for filename in missing_files})
+        except Exception:
+            return
+
+
 def finalize(
     data_file: Path, affected_sources: list[Path], *, data_root: Path | None = None
 ) -> None:
@@ -155,9 +206,6 @@ def finalize(
         data_root = data_file.parent
 
     keep_abs = _abs_set(affected_sources, data_root)
-    if not keep_abs:
-        return
-
     rows = _coverage_file_rows(data_file, data_root=data_root, keep_abs=keep_abs)
     if rows is None:
         return

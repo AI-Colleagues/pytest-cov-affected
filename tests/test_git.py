@@ -121,11 +121,11 @@ def test_affected_sources_does_not_fall_back_for_local_non_python_changes(
     assert out == []
 
 
-def test_affected_sources_ignores_repo_template_entrypoint(make_git_repo) -> None:
+def test_affected_sources_includes_repo_template_entrypoint(make_git_repo) -> None:
     repo = make_git_repo({"src/pytest_cov_affected/main.py": "print('hi')\n"})
     (repo / "src/pytest_cov_affected/main.py").write_text("print('bye')\n")
 
     out = git.affected_sources(
         repo_root=repo, src_root=Path("src"), base="merge-base:main"
     )
-    assert out == []
+    assert out == [Path("src/pytest_cov_affected/main.py")]

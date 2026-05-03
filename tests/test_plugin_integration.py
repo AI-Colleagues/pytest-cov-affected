@@ -1,6 +1,7 @@
 """End-to-end pytester integration tests for the plugin."""
 
 from __future__ import annotations
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,6 +10,52 @@ import pytest
 
 
 pytest_plugins = ["pytester"]
+pytestmark = pytest.mark.no_cover
+
+
+_COVERAGE_ENV_VARS = (
+    "COVERAGE_FILE",
+    "COVERAGE_PROCESS_START",
+    "COVERAGE_RCFILE",
+    "COVERAGE_RUN",
+)
+
+
+def _runpytest_subprocess_clean(
+    pytester: pytest.Pytester, *args: str
+) -> pytest.RunResult:
+    """Run pytester subprocesses without inheriting coverage instrumentation."""
+    saved_env = {name: os.environ.get(name) for name in _COVERAGE_ENV_VARS}
+    saved_cwd = os.getcwd()
+    for name in _COVERAGE_ENV_VARS:
+        os.environ.pop(name, None)
+    try:
+        os.chdir(pytester.path)
+        return pytester.runpytest_subprocess(*args)
+    finally:
+        os.chdir(saved_cwd)
+        for name, value in saved_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _run_subprocess_without_coverage_env(
+    args: list[str], *, cwd: Path, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """Run a subprocess without inheriting coverage instrumentation."""
+    saved_env = {name: os.environ.get(name) for name in _COVERAGE_ENV_VARS}
+    for name in _COVERAGE_ENV_VARS:
+        os.environ.pop(name, None)
+    try:
+        return subprocess.run(args, cwd=cwd, check=check, text=True)
+    finally:
+        for name, value in saved_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _init_repo(repo: Path, files: dict[str, str]) -> None:
@@ -112,7 +159,7 @@ def _seed_coverage_project(pytester: pytest.Pytester) -> Path:
 
 def test_no_changes_deselects_all(pytester: pytest.Pytester) -> None:
     _seed_project(pytester)
-    result = pytester.runpytest("--cov-affected")
+    result = _runpytest_subprocess_clean(pytester, "--cov-affected")
     assert result.ret == 5  # no tests collected/selected
     result.stdout.fnmatch_lines(["*0 modules affected*"])
 
@@ -135,7 +182,7 @@ def test_change_runs_only_matching_test(pytester: pytest.Pytester) -> None:
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "edit foo"], cwd=repo, check=True)
 
-    result = pytester.runpytest("--cov-affected", "-v")
+    result = _runpytest_subprocess_clean(pytester, "--cov-affected", "-v")
     assert result.ret == 0
     result.stdout.fnmatch_lines(["*test_foo.py*PASSED*"])
     assert "test_bar" not in result.stdout.str()
@@ -150,7 +197,7 @@ def test_missing_test_warns_but_does_not_fail(pytester: pytest.Pytester) -> None
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "add baz"], cwd=repo, check=True)
 
-    result = pytester.runpytest("--cov-affected", "-W", "always")
+    result = _runpytest_subprocess_clean(pytester, "--cov-affected", "-W", "always")
     assert result.ret == 5
     result.stdout.fnmatch_lines(["*1 modules without tests*"])
 
@@ -163,8 +210,8 @@ def test_no_data_does_not_print_traceback(pytester: pytest.Pytester) -> None:
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "add baz"], cwd=repo, check=True)
 
-    result = pytester.runpytest(
-        "--cov-affected", "--cov-report", "term-missing", "-W", "always"
+    result = _runpytest_subprocess_clean(
+        pytester, "--cov-affected", "--cov-report", "term-missing", "-W", "always"
     )
     assert result.ret == 5
     output = result.stdout.str()
@@ -184,24 +231,20 @@ def test_coverage_html_xml_only_contains_affected(
 
     repo = _seed_coverage_project(pytester)
 
-    result = pytester.runpytest(*extra_args, "--cov-affected")
+    result = _runpytest_subprocess_clean(pytester, *extra_args, "--cov-affected")
     assert result.ret == 0
 
     xml_path = repo / "coverage.xml"
-    subprocess.run(
-        [sys.executable, "-m", "coverage", "xml", "-o", str(xml_path)],
-        cwd=repo,
-        check=True,
+    _run_subprocess_without_coverage_env(
+        [sys.executable, "-m", "coverage", "xml", "-o", str(xml_path)], cwd=repo
     )
     xml_content = xml_path.read_text()
     assert "foo.py" in xml_content
     assert "bar.py" not in xml_content
 
     html_dir = repo / "htmlcov"
-    subprocess.run(
-        [sys.executable, "-m", "coverage", "html", "-d", str(html_dir)],
-        cwd=repo,
-        check=True,
+    _run_subprocess_without_coverage_env(
+        [sys.executable, "-m", "coverage", "html", "-d", str(html_dir)], cwd=repo
     )
     html_files = {p.name for p in html_dir.glob("*.html")}
     assert any("foo_py" in name for name in html_files), html_files
@@ -236,8 +279,8 @@ def test_term_missing_shows_affected_modules(
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "edit foo"], cwd=repo, check=True)
 
-    result = pytester.runpytest(
-        *extra_args, "--cov-affected", "--cov-report", "term-missing"
+    result = _runpytest_subprocess_clean(
+        pytester, *extra_args, "--cov-affected", "--cov-report", "term-missing"
     )
 
     assert result.ret == 0
@@ -260,8 +303,8 @@ def test_changed_init_module_is_reported(pytester: pytest.Pytester) -> None:
         ["git", "commit", "-q", "-m", "touch init and foo"], cwd=repo, check=True
     )
 
-    result = pytester.runpytest(
-        "--cov", "--cov-affected", "--cov-report", "term-missing"
+    result = _runpytest_subprocess_clean(
+        pytester, "--cov", "--cov-affected", "--cov-report", "term-missing"
     )
 
     assert result.ret == 5
@@ -280,7 +323,9 @@ def test_changed_init_module_appears_in_term_missing_without_cov(
         ["git", "commit", "-q", "-m", "touch init only"], cwd=repo, check=True
     )
 
-    result = pytester.runpytest("--cov-affected", "--cov-report", "term-missing")
+    result = _runpytest_subprocess_clean(
+        pytester, "--cov-affected", "--cov-report", "term-missing"
+    )
 
     assert result.ret == 5
     output = result.stdout.str()
@@ -290,7 +335,9 @@ def test_changed_init_module_appears_in_term_missing_without_cov(
 def test_plain_cov_report_still_shows_table(pytester: pytest.Pytester) -> None:
     _seed_project(pytester)
 
-    result = pytester.runpytest("tests/", "--cov", "--cov-report", "term-missing")
+    result = _runpytest_subprocess_clean(
+        pytester, "tests/", "--cov", "--cov-report", "term-missing"
+    )
 
     assert result.ret == 0
     output = result.stdout.str()
