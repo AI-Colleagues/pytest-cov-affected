@@ -58,7 +58,10 @@ def _create_cov_affected_state(config: pytest.Config) -> _State:  # pragma: no c
         base=base,
         include_untracked=include_untracked,
     )
-    result = mapping.map_to_tests(sources, src_root=src_root, tests_root=tests_root)
+    abs_sources = [repo_root / source for source in sources]
+    result = mapping.map_to_tests(
+        abs_sources, src_root=src_root, tests_root=tests_root
+    )
 
     state = _State(
         repo_root=repo_root,
@@ -88,7 +91,7 @@ def _activate_cov_affected_coverage(
     cov_objs = _find_pytest_cov_coverage_objects(config)
     state.cov_objs = list(cov_objs)
     repo_root = state.repo_root
-    affected_sources = [repo_root / s for s in state.result.affected_sources]
+    affected_sources = list(state.result.affected_sources)
 
     for cov_obj in cov_objs:
         coverage_scope.apply(
@@ -147,7 +150,7 @@ def _coverage_data_file_candidates(state: _State) -> list[Path]:  # pragma: no c
 def _finalize_coverage_outputs(state: _State) -> None:  # pragma: no cover
     """Rewrite any discovered coverage data files and write the sidecar rcfile."""
     repo_root = state.repo_root
-    abs_sources = [repo_root / s for s in state.result.affected_sources]
+    abs_sources = list(state.result.affected_sources)
 
     for candidate in _coverage_data_file_candidates(state):
         if candidate.exists():
@@ -203,7 +206,7 @@ def _build_managed_report_cov(state: _State) -> Any:  # pragma: no cover
     )
     coverage_scope.apply(
         report_cov,
-        [state.repo_root / s for s in state.result.affected_sources],
+        list(state.result.affected_sources),
         data_root=state.repo_root,
     )
     try:
@@ -293,7 +296,7 @@ def _sync_pytest_cov_terminal_report(
         return
 
     repo_root = state.repo_root
-    abs_sources = [repo_root / s for s in state.result.affected_sources]
+    abs_sources = list(state.result.affected_sources)
     report_cov = coverage.Coverage(
         data_file=str(repo_root / ".coverage"),
         config_file=True,

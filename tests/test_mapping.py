@@ -157,3 +157,24 @@ def test_expected_test_for_ignores_empty_relative_path() -> None:
         )
         is None
     )
+
+
+def test_maps_absolute_source_with_absolute_roots(tmp_path: Path) -> None:
+    src_root = (tmp_path / "src").resolve()
+    tests_root = (tmp_path / "tests").resolve()
+    (src_root / "pkg").mkdir(parents=True)
+    tests_root.mkdir()
+    source = (src_root / "pkg" / "foo.py").resolve()
+    test_file = (tests_root / "test_foo.py").resolve()
+    source.write_text("")
+    test_file.write_text("")
+
+    result = map_to_tests(
+        [source],
+        src_root=src_root,
+        tests_root=tests_root,
+    )
+
+    assert result.affected_sources == [source]
+    assert result.affected_tests == [test_file]
+    assert result.missing_tests == []
