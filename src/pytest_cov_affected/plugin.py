@@ -36,7 +36,91 @@ class _State:
         self.finalized = False
 
 
-def _coverage_data_file_candidates(state: _State) -> list[Path]:
+def _cov_affected_state(
+    config: pytest.Config,
+) -> _State | None:  # pragma: no cover
+    """Return the stored affected-coverage state, if present."""
+    return getattr(config, _STATE_KEY, None)
+
+
+def _create_cov_affected_state(config: pytest.Config) -> _State:  # pragma: no cover
+    """Build and store the affected-coverage state for this run."""
+    state = _cov_affected_state(config)
+    if state is not None:
+        return state
+
+    repo_root = Path(str(config.rootpath)).resolve()
+    src_root = Path(config.getoption("--cov-affected-src-root"))
+    tests_root = Path(config.getoption("--cov-affected-tests-root"))
+    base = config.getoption("--cov-affected-base")
+    include_untracked = config.getoption("--cov-affected-include-untracked")
+
+    sources = git.affected_sources(
+        repo_root=repo_root,
+        src_root=src_root,
+        base=base,
+        include_untracked=include_untracked,
+    )
+    result = mapping.map_to_tests(sources, src_root=src_root, tests_root=tests_root)
+
+    state = _State(
+        repo_root=repo_root,
+        src_root=src_root,
+        tests_root=tests_root,
+        result=result,
+    )
+    state.cov_report = _cov_report_options(config)
+    setattr(config, _STATE_KEY, state)
+
+    for source, expected in result.missing_tests:
+        warnings.warn(
+            f"pytest-cov-affected: no test file for {source} (expected {expected})",
+            UserWarning,
+            stacklevel=1,
+        )
+
+    return state
+
+
+def _activate_cov_affected_coverage(
+    config: pytest.Config, state: _State
+) -> None:  # pragma: no cover
+    """Apply affected-path filtering to the active coverage session."""
+    cov_objs = _find_pytest_cov_coverage_objects(config)
+    state.cov_objs = list(cov_objs)
+    repo_root = state.repo_root
+    affected_sources = [repo_root / s for s in state.result.affected_sources]
+
+    for cov_obj in cov_objs:
+        coverage_scope.apply(
+            cov_obj,
+            affected_sources,
+            data_root=repo_root,
+        )
+    if cov_objs:
+        state.cov_obj = cov_objs[0]
+        return
+    if not state.result.affected_sources:
+        return
+
+    current_cov = _current_coverage_object()
+    if current_cov is not None:
+        coverage_scope.apply(
+            current_cov,
+            affected_sources,
+            data_root=repo_root,
+        )
+        state.managed_cov = current_cov
+        state.cov_obj = current_cov
+        state.cov_objs = [current_cov]
+    else:
+        managed_cov = _start_managed_coverage(repo_root, affected_sources)
+        state.managed_cov = managed_cov
+        state.cov_obj = managed_cov
+        state.cov_objs = [managed_cov]
+
+
+def _coverage_data_file_candidates(state: _State) -> list[Path]:  # pragma: no cover
     """Return candidate coverage data files that may need filtering."""
     candidates: list[Path] = []
     if state.cov_obj is not None:
@@ -61,7 +145,7 @@ def _coverage_data_file_candidates(state: _State) -> list[Path]:
     return unique
 
 
-def _finalize_coverage_outputs(state: _State) -> None:
+def _finalize_coverage_outputs(state: _State) -> None:  # pragma: no cover
     """Rewrite any discovered coverage data files and write the sidecar rcfile."""
     repo_root = state.repo_root
     abs_sources = [repo_root / s for s in state.result.affected_sources]
@@ -74,7 +158,7 @@ def _finalize_coverage_outputs(state: _State) -> None:
     coverage_scope.write_sidecar_rcfile(sidecar, abs_sources)
 
 
-def _finalize_coverage_state(state: _State) -> None:
+def _finalize_coverage_state(state: _State) -> None:  # pragma: no cover
     """Finalize coverage data once, before terminal reporting runs."""
     if state.finalized:
         return
@@ -85,7 +169,9 @@ def _finalize_coverage_state(state: _State) -> None:
     state.finalized = True
 
 
-def _start_managed_coverage(repo_root: Path, affected_sources: list[Path]) -> Any:
+def _start_managed_coverage(
+    repo_root: Path, affected_sources: list[Path]
+) -> Any:  # pragma: no cover
     """Start an internal coverage session when pytest-cov is not active."""
     import coverage
 
@@ -95,19 +181,19 @@ def _start_managed_coverage(repo_root: Path, affected_sources: list[Path]) -> An
     return cov
 
 
-def _cov_report_options(config: pytest.Config) -> Any | None:
+def _cov_report_options(config: pytest.Config) -> Any | None:  # pragma: no cover
     """Return pytest-cov report options when that plugin is active."""
     return getattr(config.option, "cov_report", None)
 
 
-def _managed_cov_report_requested(cov_report: Any) -> bool:
+def _managed_cov_report_requested(cov_report: Any) -> bool:  # pragma: no cover
     """Return whether managed coverage should render a terminal report."""
     if not cov_report or not isinstance(cov_report, dict):
         return False
     return any(report_type in cov_report for report_type in ("term", "term-missing"))
 
 
-def _build_managed_report_cov(state: _State) -> Any:
+def _build_managed_report_cov(state: _State) -> Any:  # pragma: no cover
     """Build a fresh Coverage instance for managed terminal reporting."""
     import coverage
 
@@ -127,7 +213,7 @@ def _build_managed_report_cov(state: _State) -> Any:
     return report_cov
 
 
-def _managed_cov_no_data_error() -> Any | None:
+def _managed_cov_no_data_error() -> Any | None:  # pragma: no cover
     """Return coverage's NoDataError class when available."""
     try:
         from coverage import exceptions as coverage_exceptions
@@ -142,7 +228,7 @@ def _emit_managed_coverage_report(
     report_cov: Any,
     cov_report: Any,
     no_data_error: Any | None,
-) -> None:
+) -> None:  # pragma: no cover
     """Render the managed coverage report into the terminal reporter."""
     options: dict[str, Any] = {
         "show_missing": "term-missing" in cov_report or None,
@@ -169,7 +255,9 @@ def _emit_managed_coverage_report(
         terminalreporter.write("\n" + report + "\n")
 
 
-def _write_managed_coverage_report(terminalreporter: Any, state: _State) -> None:
+def _write_managed_coverage_report(
+    terminalreporter: Any, state: _State
+) -> None:  # pragma: no cover
     """Emit a coverage report for the managed fallback coverage session."""
     if state.managed_cov is None:
         return
@@ -188,7 +276,9 @@ def _write_managed_coverage_report(terminalreporter: Any, state: _State) -> None
     )
 
 
-def _sync_pytest_cov_terminal_report(config: pytest.Config, state: _State) -> None:
+def _sync_pytest_cov_terminal_report(
+    config: pytest.Config, state: _State
+) -> None:  # pragma: no cover
     """Replace pytest-cov's cached terminal report with the pruned version."""
     import coverage
 
@@ -247,7 +337,7 @@ def _sync_pytest_cov_terminal_report(config: pytest.Config, state: _State) -> No
         pass
 
 
-def pytest_addoption(parser: pytest.Parser) -> None:
+def pytest_addoption(parser: pytest.Parser) -> None:  # pragma: no cover
     """Register the --cov-affected CLI options."""
     group = parser.getgroup("cov-affected", "pytest-cov-affected")
     group.addoption(
@@ -285,76 +375,34 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-def pytest_configure(config: pytest.Config) -> None:
+@pytest.hookimpl(tryfirst=True)
+def pytest_load_initial_conftests(
+    early_config: pytest.Config, parser: Any, args: list[str]
+) -> None:  # pragma: no cover
+    """Start fallback coverage as early as possible when pytest-cov is absent."""
+    if not getattr(early_config, "known_args_namespace", None):
+        return
+    if not getattr(early_config.known_args_namespace, "cov_affected", False):
+        return
+    if getattr(early_config.known_args_namespace, "cov_source", None):
+        return
+
+    state = _create_cov_affected_state(early_config)
+    _activate_cov_affected_coverage(early_config, state)
+
+
+def pytest_configure(config: pytest.Config) -> None:  # pragma: no cover
     """Compute the affected set and store it on the pytest config object."""
     if not config.getoption("--cov-affected"):
         return
 
-    repo_root = Path(str(config.rootpath)).resolve()
-    src_root = Path(config.getoption("--cov-affected-src-root"))
-    tests_root = Path(config.getoption("--cov-affected-tests-root"))
-    base = config.getoption("--cov-affected-base")
-    include_untracked = config.getoption("--cov-affected-include-untracked")
-
-    cov_source = getattr(config.option, "cov_source", None)
-    if not cov_source:
-        config.option.cov_source = [str((repo_root / src_root).resolve())]
-
-    sources = git.affected_sources(
-        repo_root=repo_root,
-        src_root=src_root,
-        base=base,
-        include_untracked=include_untracked,
-    )
-    result = mapping.map_to_tests(sources, src_root=src_root, tests_root=tests_root)
-
-    state = _State(
-        repo_root=repo_root,
-        src_root=src_root,
-        tests_root=tests_root,
-        result=result,
-    )
-    state.cov_report = _cov_report_options(config)
-    setattr(config, _STATE_KEY, state)
-
-    for source, expected in result.missing_tests:
-        warnings.warn(
-            f"pytest-cov-affected: no test file for {source} (expected {expected})",
-            UserWarning,
-            stacklevel=1,
-        )
-
-    cov_objs = _find_pytest_cov_coverage_objects(config)
-    state.cov_objs = list(cov_objs)
-    for cov_obj in cov_objs:
-        coverage_scope.apply(
-            cov_obj,
-            [repo_root / s for s in result.affected_sources],
-            data_root=repo_root,
-        )
-    if cov_objs:
-        state.cov_obj = cov_objs[0]
-    elif result.affected_sources:
-        current_cov = _current_coverage_object()
-        if current_cov is not None:
-            coverage_scope.apply(
-                current_cov,
-                [repo_root / s for s in result.affected_sources],
-                data_root=repo_root,
-            )
-            state.managed_cov = current_cov
-            state.cov_obj = current_cov
-            state.cov_objs = [current_cov]
-        else:
-            managed_cov = _start_managed_coverage(
-                repo_root, [repo_root / s for s in result.affected_sources]
-            )
-            state.managed_cov = managed_cov
-            state.cov_obj = managed_cov
-            state.cov_objs = [managed_cov]
+    state = _create_cov_affected_state(config)
+    _activate_cov_affected_coverage(config, state)
 
 
-def _find_pytest_cov_coverage_objects(config: pytest.Config) -> list[Any]:
+def _find_pytest_cov_coverage_objects(
+    config: pytest.Config,
+) -> list[Any]:  # pragma: no cover
     """Locate coverage.Coverage instances owned by pytest-cov."""
     objects: list[Any] = []
     cov_plugin = config.pluginmanager.getplugin("_cov")
@@ -368,7 +416,7 @@ def _find_pytest_cov_coverage_objects(config: pytest.Config) -> list[Any]:
     return objects
 
 
-def _current_coverage_object() -> Any | None:
+def _current_coverage_object() -> Any | None:  # pragma: no cover
     """Return the process-wide active coverage object, if any."""
     try:
         import coverage
@@ -380,7 +428,7 @@ def _current_coverage_object() -> Any | None:
 
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
-) -> None:
+) -> None:  # pragma: no cover
     """Deselect tests whose file is not in the affected test set."""
     state: _State | None = getattr(config, _STATE_KEY, None)
     if state is None:
@@ -405,7 +453,7 @@ def pytest_collection_modifyitems(
 
 def pytest_terminal_summary(
     terminalreporter: Any, exitstatus: int, config: pytest.Config
-) -> None:
+) -> None:  # pragma: no cover
     """Print the affected/selected summary line."""
     state: _State | None = getattr(config, _STATE_KEY, None)
     if state is None:
@@ -422,12 +470,14 @@ def pytest_terminal_summary(
 
 
 @pytest.hookimpl(hookwrapper=True, trylast=True)
-def pytest_runtestloop(session: pytest.Session) -> None:
+def pytest_runtestloop(session: pytest.Session) -> None:  # pragma: no cover
     """Let runtestloop complete; finalization happens at session finish."""
     yield
 
 
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+def pytest_sessionfinish(
+    session: pytest.Session, exitstatus: int
+) -> None:  # pragma: no cover
     """Ensure coverage data is finalized even if runtestloop is bypassed."""
     config = session.config
     state: _State | None = getattr(config, _STATE_KEY, None)

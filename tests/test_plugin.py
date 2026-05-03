@@ -1,4 +1,4 @@
-"""End-to-end pytester integration tests for the plugin."""
+"""Tests for pytest_cov_affected.plugin."""
 
 from __future__ import annotations
 import os
@@ -6,11 +6,12 @@ import subprocess
 import sys
 from pathlib import Path
 from textwrap import dedent
+from types import SimpleNamespace
 import pytest
+from pytest_cov_affected import mapping, plugin
 
 
 pytest_plugins = ["pytester"]
-pytestmark = pytest.mark.no_cover
 
 
 _COVERAGE_ENV_VARS = (
@@ -19,6 +20,29 @@ _COVERAGE_ENV_VARS = (
     "COVERAGE_RCFILE",
     "COVERAGE_RUN",
 )
+
+
+class _DummyConfig:
+    def __init__(self, tmp_path: Path, *, cov_source: list[str] | None = None) -> None:
+        self.rootpath = tmp_path
+        self.option = SimpleNamespace(
+            cov_source=cov_source,
+            cov_report={"term-missing": None},
+        )
+        self.known_args_namespace = SimpleNamespace(
+            cov_affected=True,
+            cov_source=cov_source,
+        )
+
+    def getoption(self, name: str):
+        options = {
+            "--cov-affected": True,
+            "--cov-affected-src-root": "src",
+            "--cov-affected-tests-root": "tests",
+            "--cov-affected-base": "merge-base:main",
+            "--cov-affected-include-untracked": False,
+        }
+        return options[name]
 
 
 def _runpytest_subprocess_clean(
@@ -157,6 +181,66 @@ def _seed_coverage_project(pytester: pytest.Pytester) -> Path:
     return repo
 
 
+def test_load_initial_conftests_starts_managed_coverage_early(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _DummyConfig(tmp_path)
+    result = mapping.MappingResult(
+        affected_sources=[Path("src/pkg/foo.py")],
+        affected_tests=[],
+        missing_tests=[],
+    )
+    started: list[tuple[Path, list[Path]]] = []
+
+    monkeypatch.setattr(
+        plugin.git, "affected_sources", lambda **_: [Path("src/pkg/foo.py")]
+    )
+    monkeypatch.setattr(plugin.mapping, "map_to_tests", lambda *args, **kwargs: result)
+    monkeypatch.setattr(plugin, "_find_pytest_cov_coverage_objects", lambda _: [])
+    monkeypatch.setattr(plugin, "_current_coverage_object", lambda: None)
+    monkeypatch.setattr(
+        plugin,
+        "_start_managed_coverage",
+        lambda repo_root, affected_sources: started.append(
+            (repo_root, affected_sources)
+        )
+        or "managed",
+    )
+
+    plugin.pytest_load_initial_conftests(config, None, [])
+
+    state = getattr(config, plugin._STATE_KEY)
+    assert started == [(tmp_path.resolve(), [tmp_path.resolve() / "src/pkg/foo.py"])]
+    assert state.managed_cov == "managed"
+    assert state.cov_obj == "managed"
+
+
+def test_load_initial_conftests_skips_managed_coverage_when_cov_is_active(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _DummyConfig(tmp_path, cov_source=["src/pkg"])
+    result = mapping.MappingResult(
+        affected_sources=[Path("src/pkg/foo.py")],
+        affected_tests=[],
+        missing_tests=[],
+    )
+
+    monkeypatch.setattr(
+        plugin.git, "affected_sources", lambda **_: [Path("src/pkg/foo.py")]
+    )
+    monkeypatch.setattr(plugin.mapping, "map_to_tests", lambda *args, **kwargs: result)
+    monkeypatch.setattr(
+        plugin,
+        "_start_managed_coverage",
+        lambda *args, **kwargs: pytest.fail("unexpected managed coverage start"),
+    )
+
+    plugin.pytest_load_initial_conftests(config, None, [])
+
+    assert not hasattr(config, plugin._STATE_KEY)
+
+
+@pytest.mark.no_cover
 def test_no_changes_deselects_all(pytester: pytest.Pytester) -> None:
     _seed_project(pytester)
     result = _runpytest_subprocess_clean(pytester, "--cov-affected")
@@ -164,6 +248,7 @@ def test_no_changes_deselects_all(pytester: pytest.Pytester) -> None:
     result.stdout.fnmatch_lines(["*0 modules affected*"])
 
 
+@pytest.mark.no_cover
 def test_change_runs_only_matching_test(pytester: pytest.Pytester) -> None:
     repo = _seed_project(pytester)
     subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=repo, check=True)
@@ -189,6 +274,7 @@ def test_change_runs_only_matching_test(pytester: pytest.Pytester) -> None:
     result.stdout.fnmatch_lines(["*1 modules affected, 1 tests selected*"])
 
 
+@pytest.mark.no_cover
 def test_missing_test_warns_but_does_not_fail(pytester: pytest.Pytester) -> None:
     repo = _seed_project(pytester)
     subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=repo, check=True)
@@ -202,6 +288,7 @@ def test_missing_test_warns_but_does_not_fail(pytester: pytest.Pytester) -> None
     result.stdout.fnmatch_lines(["*1 modules without tests*"])
 
 
+@pytest.mark.no_cover
 def test_no_data_does_not_print_traceback(pytester: pytest.Pytester) -> None:
     repo = _seed_project(pytester)
     subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=repo, check=True)
@@ -222,6 +309,7 @@ def test_no_data_does_not_print_traceback(pytester: pytest.Pytester) -> None:
 
 
 @pytest.mark.parametrize("extra_args", [(), ("--cov",)])
+@pytest.mark.no_cover
 def test_coverage_html_xml_only_contains_affected(
     pytester: pytest.Pytester,
     extra_args: tuple[str, ...],
@@ -258,6 +346,7 @@ def test_coverage_html_xml_only_contains_affected(
 
 
 @pytest.mark.parametrize("extra_args", [(), ("--cov",)])
+@pytest.mark.no_cover
 def test_term_missing_shows_affected_modules(
     pytester: pytest.Pytester,
     extra_args: tuple[str, ...],
@@ -294,6 +383,7 @@ def test_term_missing_shows_affected_modules(
     assert "src/proj/__init__.py" not in output
 
 
+@pytest.mark.no_cover
 def test_changed_init_module_is_reported(pytester: pytest.Pytester) -> None:
     repo = _seed_project(pytester)
     subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=repo, check=True)
@@ -312,6 +402,7 @@ def test_changed_init_module_is_reported(pytester: pytest.Pytester) -> None:
     assert "src/proj/__init__.py" in output
 
 
+@pytest.mark.no_cover
 def test_changed_init_module_appears_in_term_missing_without_cov(
     pytester: pytest.Pytester,
 ) -> None:
@@ -332,6 +423,7 @@ def test_changed_init_module_appears_in_term_missing_without_cov(
     assert "src/proj/__init__.py" in output
 
 
+@pytest.mark.no_cover
 def test_plain_cov_report_still_shows_table(pytester: pytest.Pytester) -> None:
     _seed_project(pytester)
 
