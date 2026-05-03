@@ -25,17 +25,23 @@ docs = [
 ]
 
 [project]
-dependencies = []
-description = "Add your description here"
-name = "uv-template"
+dependencies = [
+  "coverage>=7",
+  "pytest>=8"
+]
+description = "Run pytest and report coverage only for git-affected modules."
+name = "pytest-cov-affected"
 readme = "README.md"
 requires-python = ">=3.12"
-version = "0.0.1"
+version = "0.1.0"
+
+[project.entry-points.pytest11]
+cov_affected = "pytest_cov_affected.plugin"
 
 [project.urls]
-Homepage = "https://github.com/AI-Colleagues/uv-template"
-Issues = "https://github.com/AI-Colleagues/uv-template/issues"
-Source = "https://github.com/AI-Colleagues/uv-template"
+Homepage = "https://github.com/AI-Colleagues/pytest-cov-affected"
+Issues = "https://github.com/AI-Colleagues/pytest-cov-affected/issues"
+Source = "https://github.com/AI-Colleagues/pytest-cov-affected"
 
 [tool.coverage.report]
 exclude_lines = [
@@ -48,7 +54,7 @@ exclude_lines = [
 [tool.coverage.run]
 branch = true
 command_line = "-m pytest"
-source = ["src/uv_template"]
+source = ["src/pytest_cov_affected"]
 
 [tool.hatch.build.targets.wheel]
 exclude = [
@@ -101,7 +107,7 @@ select = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["uv_template"]
+known-first-party = ["pytest_cov_affected"]
 lines-after-imports = 2
 no-lines-before = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
@@ -109,7 +115,7 @@ no-lines-before = ["future", "standard-library", "third-party", "first-party", "
 max-complexity = 10
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["D"]
+"tests/**" = ["D", "E501"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

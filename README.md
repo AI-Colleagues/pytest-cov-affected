@@ -1,93 +1,95 @@
-# UV Template
+# pytest-cov-affected
 
-[![CI](https://github.com/AI-Colleagues/uv-template/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/AI-Colleagues/uv-template/actions/workflows/ci.yml?query=branch%3Amain)
-[![Coverage](https://coverage-badge.samuelcolvin.workers.dev/AI-Colleagues/uv-template.svg)](https://coverage-badge.samuelcolvin.workers.dev/redirect/AI-Colleagues/uv-template)
-<!-- [![PyPI](https://img.shields.io/pypi/v/uv-template.svg)](https://pypi.python.org/pypi/uv-template) -->
+[![CI](https://github.com/AI-Colleagues/pytest-cov-affected/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/AI-Colleagues/pytest-cov-affected/actions/workflows/ci.yml?query=branch%3Amain)
 
-A modern Python project template with UV package management, pre-commit hooks for code quality, and documentation support via MkDocs.
+A pytest plugin that runs only the tests for source modules you changed and
+reports coverage exclusively for those modules.
 
-## Features
+## Why
 
-- 📦 UV for package and project management
-- 🔍 Pre-commit hooks for code quality
-- 📚 Documentation setup with MkDocs Material theme
-- 🛠️ Makefile for common development tasks
-- ✨ Code quality tools:
-  - Black-compatible formatting (via Ruff)
-  - Import sorting (via Ruff)
-  - Type checking with mypy
-  - Comprehensive linting with Ruff
-- 📊 Testing setup with pytest and coverage reporting
+Running the full test suite and full coverage report on every change is slow
+and the resulting coverage number is diluted by code you didn't touch. With
+`--cov-affected`, pytest collects only `tests/<rel>/test_<module>.py` for the
+`src/<pkg>/<rel>/<module>.py` files in your local staged/unstaged changes. If
+the tree is clean, it falls back to comparing against the merge-base with
+`main`. Any subsequent `coverage html` / `coverage xml` reports contain rows
+only for those modules.
+`--cov` is optional and does not change the affected set.
 
-## Installation
+## Install
 
 ```bash
-# Install dependencies
-uv sync
-```
-
-## Development
-
-This template includes several tools to ensure code quality and maintainability:
-
-- **UV**: Modern package and project management for Python 3.12+
-- **Pre-commit hooks**: Automated code quality checks
-- **MkDocs**: Documentation generation with Material theme and Python API docs support
-- **Ruff**: All-in-one Python linter and formatter with:
-  - Code style enforcement (PEP 8)
-  - Import sorting
-  - Complexity checking (McCabe)
-  - Docstring validation (Google style)
-  - And many more checks
-- **mypy**: Static type checking with strict settings
-- **Github Actions**:
-  - Release workflow on push tags
-
-### Code Quality Tools
-
-The template comes with pre-configured linting and formatting tools that run automatically on commit:
-
-- **Ruff Format**: Formats your code consistently (Black-compatible)
-- **Ruff Lint**: Comprehensive linting with multiple rule sets enabled:
-  - Code style (pycodestyle)
-  - Bugs and complexity (pyflakes, flake8-bugbear)
-  - Naming conventions (PEP 8)
-  - Import organization
-  - And more
-- **mypy**: Strict type checking with `disallow_untyped_defs=true`
-
-To manually run the tools:
-```bash
-# Check code quality (ruff, mypy, and format check)
-make lint
-
-# Format code
-make format
-
-# Run tests with coverage report
-make test
-
-# Serve documentation locally
-make doc
-```
-
-You can also run individual tools directly with UV:
-```bash
-# Format and lint code
-ruff check .
-ruff format .
-
-# Type checking
-mypy .
-
-# Run tests with coverage
-pytest --cov --cov-report term-missing tests/
+uv add --dev pytest-cov-affected
+# or
+pip install pytest-cov-affected
 ```
 
 ## Usage
 
-1. Clone this template
-2. Update the project details in `pyproject.toml`
-3. Start developing with the included tools
+```bash
+# run only tests for modules changed in local edits, or since merge-base with main
+pytest --cov-affected
 
-For more detailed information, check the documentation.
+# show the coverage table without needing `--cov`
+pytest --cov-affected --cov-report term-missing
+
+# optional: also enable pytest-cov terminal reporting
+pytest --cov-affected --cov
+
+# pick a different diff base
+pytest --cov-affected --cov-affected-base=origin/release
+
+# include new untracked .py files under src/
+pytest --cov-affected --cov-affected-include-untracked
+
+# follow up with coverage reports — these will only contain affected modules
+coverage html
+coverage xml
+```
+
+## Convention
+
+The plugin assumes the standard `src/` layout:
+
+```
+src/<package>/path/to/module.py    ⇒    tests/path/to/test_module.py
+```
+
+Configurable via:
+
+- `--cov-affected-src-root` (default: `src`)
+- `--cov-affected-tests-root` (default: `tests`)
+
+Source files without a matching test file produce a `UserWarning` and are
+counted in the summary line — they don't fail the run.
+
+## How it works
+
+1. Local staged/unstaged changes are checked first; if any exist, their changed
+   `.py` files under `src_root` become the affected set.
+2. If there are no local changes, `git diff` against the configured base
+   produces the list of changed `.py` files under `src_root`.
+3. Each path is mapped to its expected test file; missing tests are reported.
+4. Pytest's collection is narrowed to the matching test files only.
+5. The active `coverage.py` instance's `include` patterns are constrained to
+   the affected sources so measurement is scoped, or a managed coverage
+   session is started when `pytest-cov` is not active.
+6. At session end, the `.coverage` SQLite data file is filtered in place so
+   later `coverage html` / `coverage xml` calls report only affected modules.
+   A `.coveragerc.affected` sidecar is written alongside for users who prefer
+   `coverage --rcfile`.
+
+## Documentation
+
+See [docs/](docs/):
+
+- [Requirements](docs/1_requirements.md)
+- [Design](docs/2_design.md)
+- [Plan](docs/3_plan.md)
+
+## Development
+
+```bash
+uv sync
+uv run pytest
+```
