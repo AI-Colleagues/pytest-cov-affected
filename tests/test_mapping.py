@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from pathlib import Path
-from pytest_cov_affected.mapping import map_to_tests
+from pytest_cov_affected.mapping import _expected_test_for, map_to_tests
 
 
 def test_maps_simple_module(tmp_path: Path, monkeypatch) -> None:
@@ -93,3 +93,44 @@ def test_dedupes_repeated_targets(tmp_path: Path, monkeypatch) -> None:
         tests_root=Path("tests"),
     )
     assert result.affected_tests == [Path("tests/test_foo.py")]
+
+
+def test_expected_test_for_handles_top_level_module(tmp_path: Path) -> None:
+    assert _expected_test_for(
+        Path("src/foo.py"),
+        src_root=Path("src"),
+        tests_root=Path("tests"),
+    ) == Path("tests/test_foo.py")
+
+
+def test_expected_test_for_ignores_paths_outside_src_root() -> None:
+    assert (
+        _expected_test_for(
+            Path("other/pkg/foo.py"),
+            src_root=Path("src"),
+            tests_root=Path("tests"),
+        )
+        is None
+    )
+
+
+def test_expected_test_for_ignores_package_root_init() -> None:
+    assert (
+        _expected_test_for(
+            Path("src/__init__.py"),
+            src_root=Path("src"),
+            tests_root=Path("tests"),
+        )
+        is None
+    )
+
+
+def test_expected_test_for_ignores_empty_relative_path() -> None:
+    assert (
+        _expected_test_for(
+            Path("src"),
+            src_root=Path("src"),
+            tests_root=Path("tests"),
+        )
+        is None
+    )

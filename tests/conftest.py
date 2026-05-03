@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 import pytest
+
+
+_PROJECT_SRC = Path(__file__).resolve().parents[1] / "src"
+if str(_PROJECT_SRC) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_SRC))
 
 
 @pytest.fixture
