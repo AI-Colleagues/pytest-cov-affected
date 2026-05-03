@@ -40,6 +40,25 @@ def test_affected_sources_picks_up_working_tree_changes(make_git_repo) -> None:
     assert out == [Path("src/pkg/foo.py")]
 
 
+def test_affected_sources_prefers_local_changes_over_branch_diff(make_git_repo) -> None:
+    repo = make_git_repo(
+        {
+            "src/pkg/__init__.py": "",
+            "src/pkg/foo.py": "x = 1\n",
+            "src/pkg/bar.py": "y = 1\n",
+        }
+    )
+    subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=repo, check=True)
+    (repo / "src/pkg/bar.py").write_text("y = 2\n")
+    _commit(repo, "edit bar")
+    (repo / "src/pkg/foo.py").write_text("x = 2\n")
+
+    out = git.affected_sources(
+        repo_root=repo, src_root=Path("src"), base="merge-base:main"
+    )
+    assert out == [Path("src/pkg/foo.py")]
+
+
 def test_affected_sources_filters_outside_src_root(make_git_repo) -> None:
     repo = make_git_repo(
         {"src/pkg/__init__.py": "", "src/pkg/foo.py": "x=1\n", "other/baz.py": ""}
@@ -73,6 +92,28 @@ def test_affected_sources_include_untracked(make_git_repo) -> None:
 def test_affected_sources_skips_non_python(make_git_repo) -> None:
     repo = make_git_repo({"src/pkg/__init__.py": "", "src/pkg/data.txt": "old"})
     (repo / "src/pkg/data.txt").write_text("new")
+
+    out = git.affected_sources(
+        repo_root=repo, src_root=Path("src"), base="merge-base:main"
+    )
+    assert out == []
+
+
+def test_affected_sources_does_not_fall_back_for_local_non_python_changes(
+    make_git_repo,
+) -> None:
+    repo = make_git_repo(
+        {
+            "src/pkg/__init__.py": "",
+            "src/pkg/foo.py": "x = 1\n",
+            "src/pkg/bar.py": "y = 1\n",
+            "README.md": "old\n",
+        }
+    )
+    subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=repo, check=True)
+    (repo / "src/pkg/bar.py").write_text("y = 2\n")
+    _commit(repo, "edit bar")
+    (repo / "README.md").write_text("new\n")
 
     out = git.affected_sources(
         repo_root=repo, src_root=Path("src"), base="merge-base:main"

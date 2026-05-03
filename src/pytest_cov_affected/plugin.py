@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import warnings
+from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import pytest
@@ -28,7 +29,9 @@ class _State:
         self.src_root = src_root
         self.tests_root = tests_root
         self.result = result
+        self.cov_report: Any | None = None
         self.cov_obj: Any | None = None
+        self.managed_cov: Any | None = None
 
 
 def _coverage_data_file_candidates(state: _State) -> list[Path]:
@@ -70,6 +73,52 @@ def _finalize_coverage_outputs(state: _State) -> None:
 
     sidecar = repo_root / ".coveragerc.affected"
     coverage_scope.write_sidecar_rcfile(sidecar, abs_sources)
+
+
+def _start_managed_coverage(repo_root: Path, affected_sources: list[Path]) -> Any:
+    """Start an internal coverage session when pytest-cov is not active."""
+    import coverage
+
+    cov = coverage.Coverage(data_file=str(repo_root / ".coverage"), config_file=True)
+    coverage_scope.apply(cov, affected_sources, data_root=repo_root)
+    cov.start()
+    return cov
+
+
+def _cov_report_options(config: pytest.Config) -> Any | None:
+    """Return pytest-cov report options when that plugin is active."""
+    return getattr(config.option, "cov_report", None)
+
+
+def _write_managed_coverage_report(terminalreporter: Any, state: _State) -> None:
+    """Emit a coverage report for the managed fallback coverage session."""
+    if state.managed_cov is None:
+        return
+
+    cov_report = state.cov_report
+    if not cov_report:
+        return
+
+    if not isinstance(cov_report, dict):
+        cov_report = {}
+
+    if not any(report_type in cov_report for report_type in ("term", "term-missing")):
+        return
+
+    options: dict[str, Any] = {
+        "show_missing": "term-missing" in cov_report or None,
+        "ignore_errors": True,
+        "file": StringIO(),
+    }
+    skip_covered = "skip-covered" in cov_report.values()
+    if skip_covered:
+        options["skip_covered"] = True
+
+    state.managed_cov.report(**options)
+    report = options["file"].getvalue()
+    if report:
+        terminalreporter.write_sep("-", "coverage:")
+        terminalreporter.write("\n" + report + "\n")
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -135,11 +184,12 @@ def pytest_configure(config: pytest.Config) -> None:
         tests_root=tests_root,
         result=result,
     )
+    state.cov_report = _cov_report_options(config)
     setattr(config, _STATE_KEY, state)
 
     for source, expected in result.missing_tests:
         warnings.warn(
-            f"pytest-cov-affected: no test file for {source} " f"(expected {expected})",
+            f"pytest-cov-affected: no test file for {source} (expected {expected})",
             UserWarning,
             stacklevel=1,
         )
@@ -153,6 +203,12 @@ def pytest_configure(config: pytest.Config) -> None:
         )
     if cov_objs:
         state.cov_obj = cov_objs[0]
+    elif result.affected_sources:
+        managed_cov = _start_managed_coverage(
+            repo_root, [repo_root / s for s in result.affected_sources]
+        )
+        state.managed_cov = managed_cov
+        state.cov_obj = managed_cov
 
 
 def _find_active_coverage_objects(config: pytest.Config) -> list[Any]:
@@ -211,6 +267,7 @@ def pytest_terminal_summary(
     state: _State | None = getattr(config, _STATE_KEY, None)
     if state is None:
         return
+    _write_managed_coverage_report(terminalreporter, state)
     n_modules = len(state.result.affected_sources)
     n_tests = len(state.result.affected_tests)
     n_missing = len(state.result.missing_tests)
@@ -227,4 +284,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     state: _State | None = getattr(config, _STATE_KEY, None)
     if state is None:
         return
+    if state.managed_cov is not None:
+        state.managed_cov.stop()
+        state.managed_cov.save()
     _finalize_coverage_outputs(state)

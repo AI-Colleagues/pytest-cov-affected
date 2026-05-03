@@ -75,6 +75,41 @@ def _seed_project(pytester: pytest.Pytester) -> Path:
     return repo
 
 
+def _seed_coverage_project(pytester: pytest.Pytester) -> Path:
+    repo = _seed_project(pytester)
+    (repo / ".coveragerc").write_text(
+        dedent(
+            """
+            [run]
+            branch = True
+            source = src/proj
+            """
+        ).lstrip()
+    )
+    subprocess.run(["git", "add", ".coveragerc"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add coveragerc"], cwd=repo, check=True
+    )
+
+    subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=repo, check=True)
+    (repo / "src/proj/foo.py").write_text(
+        dedent(
+            """
+            def add(a, b):
+                return a + b
+
+
+            def sub(a, b):
+                # tweak
+                return a - b
+            """
+        ).lstrip()
+    )
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "touch foo"], cwd=repo, check=True)
+    return repo
+
+
 def test_no_changes_deselects_all(pytester: pytest.Pytester) -> None:
     _seed_project(pytester)
     result = pytester.runpytest("--cov-affected")
@@ -120,45 +155,17 @@ def test_missing_test_warns_but_does_not_fail(pytester: pytest.Pytester) -> None
     result.stdout.fnmatch_lines(["*1 modules without tests*"])
 
 
+@pytest.mark.parametrize("extra_args", [(), ("--cov",)])
 def test_coverage_html_xml_only_contains_affected(
     pytester: pytest.Pytester,
+    extra_args: tuple[str, ...],
 ) -> None:
     pytest.importorskip("coverage")
     import coverage  # noqa: F401
 
-    repo = _seed_project(pytester)
-    (repo / ".coveragerc").write_text(
-        dedent(
-            """
-            [run]
-            branch = True
-            source = src/proj
-            """
-        ).lstrip()
-    )
-    subprocess.run(["git", "add", ".coveragerc"], cwd=repo, check=True)
-    subprocess.run(
-        ["git", "commit", "-q", "-m", "add coveragerc"], cwd=repo, check=True
-    )
+    repo = _seed_coverage_project(pytester)
 
-    subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=repo, check=True)
-    (repo / "src/proj/foo.py").write_text(
-        dedent(
-            """
-            def add(a, b):
-                return a + b
-
-
-            def sub(a, b):
-                # tweak
-                return a - b
-            """
-        ).lstrip()
-    )
-    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "touch foo"], cwd=repo, check=True)
-
-    result = pytester.runpytest("--cov", "--cov-affected")
+    result = pytester.runpytest(*extra_args, "--cov-affected")
     assert result.ret == 0
 
     xml_path = repo / "coverage.xml"
@@ -188,8 +195,10 @@ def test_coverage_html_xml_only_contains_affected(
     assert "bar.py" not in sidecar_text
 
 
-def test_term_missing_only_shows_affected_modules(
+@pytest.mark.parametrize("extra_args", [(), ("--cov",)])
+def test_term_missing_shows_affected_modules(
     pytester: pytest.Pytester,
+    extra_args: tuple[str, ...],
 ) -> None:
     repo = _seed_project(pytester)
     subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=repo, check=True)
@@ -209,14 +218,15 @@ def test_term_missing_only_shows_affected_modules(
     subprocess.run(["git", "commit", "-q", "-m", "edit foo"], cwd=repo, check=True)
 
     result = pytester.runpytest(
-        "--cov",
-        "--cov-affected",
-        "--cov-report",
-        "term-missing",
+        *extra_args, "--cov-affected", "--cov-report", "term-missing"
     )
 
     assert result.ret == 0
     output = result.stdout.str()
+    assert "coverage:" in output
+    assert "Name" in output
+    assert "Stmts" in output
+    assert "Miss" in output
     assert "src/proj/foo.py" in output
     assert "src/proj/bar.py" not in output
     assert "src/proj/__init__.py" not in output

@@ -11,7 +11,7 @@
 
 ## Overview
 
-`pytest-cov-affected` is a pytest plugin that adds a `--cov-affected` CLI option. When enabled, it inspects the current git diff to determine which source modules have changed, narrows pytest's collected tests to only the corresponding `tests/.../test_<module>.py` files, and constrains coverage measurement and reporting to those same modules. The result is a fast, focused test+coverage run whose output reflects exactly the code the developer touched.
+`pytest-cov-affected` is a pytest plugin that adds a `--cov-affected` CLI option. When enabled, it first inspects local staged/unstaged git changes to determine which source modules have changed, falling back to the configured branch diff only when the tree is clean. It then narrows pytest's collected tests to only the corresponding `tests/.../test_<module>.py` files and constrains coverage measurement and reporting to those same modules. The result is a fast, focused test+coverage run whose output reflects exactly the code the developer touched.
 
 The design favours leaning on existing tools (`git`, `coverage.py`, `pytest`, `pytest-cov`) rather than reimplementing them. The plugin is a thin orchestrator: it computes a set of affected source paths, hands that set to coverage as `include` patterns, deselects unrelated test items during collection, and rewrites the `.coverage` data so subsequent `coverage html` / `coverage xml` invocations remain affected-only without any extra arguments.
 
@@ -25,8 +25,8 @@ The core goals are: zero configuration for the standard `src/<pkg>/path/to/modul
   - Entry point: `pytest11 = "pytest_cov_affected.plugin"` in `pyproject.toml`.
 
 - **`pytest_cov_affected.git` (Python module)**
-  - Wraps `git diff --name-only <base>...HEAD` and `git diff --name-only` (working tree) to produce the list of changed `.py` files inside the configured `src_root`.
-  - Resolves the base ref (default: merge-base with `main`, falling back to `origin/main`).
+  - Wraps local `git diff --name-only` / `git diff --name-only --cached` and, when no local changes are present, `git diff --name-only <base>` to produce the list of changed `.py` files inside the configured `src_root`.
+  - Resolves the base ref (default: merge-base with `main`).
   - Pure function: takes a working directory and returns a sorted, deduplicated list of repo-relative paths.
 
 - **`pytest_cov_affected.mapping` (Python module)**
@@ -49,7 +49,7 @@ The core goals are: zero configuration for the standard `src/<pkg>/path/to/modul
 ### Flow 1: Developer runs `pytest --cov-affected` after editing one module
 
 1. Developer edits `src/pytest_cov_affected/foo/bar.py` and runs `pytest --cov-affected`.
-2. `pytest_configure` calls `git.affected_sources(base="merge-base:main")` → `["src/pytest_cov_affected/foo/bar.py"]`.
+2. `pytest_configure` sees local edits and calls `git.affected_sources(base="merge-base:main")` → `["src/pytest_cov_affected/foo/bar.py"]`.
 3. `mapping.map_to_tests(...)` returns `affected_tests = {"tests/foo/test_bar.py"}`, `missing_tests = set()`.
 4. `coverage_scope.apply(...)` sets the active `Coverage` config's `include` to the affected sources and starts measurement (or piggybacks on `pytest-cov`'s instance).
 5. `pytest_collection_modifyitems` deselects every `Item` whose `fspath` is not in `affected_tests`. A short summary line is logged: `pytest-cov-affected: 1 module affected, 1 test file selected.`

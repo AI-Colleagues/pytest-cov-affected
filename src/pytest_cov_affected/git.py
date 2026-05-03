@@ -39,52 +39,14 @@ def _resolve_base(repo_root: Path, base: str) -> str:
     return base
 
 
-def affected_sources(
-    *,
-    repo_root: Path,
-    src_root: Path,
-    base: str = "merge-base:main",
-    include_untracked: bool = False,
+def _filter_affected_sources(
+    raw_entries: set[str], *, repo_root: Path, src_rel: Path
 ) -> list[Path]:
-    """Return repo-relative paths of changed ``.py`` files under ``src_root``.
-
-    Combines the diff against the resolved base ref with the working-tree diff
-    so uncommitted edits are also counted. When ``include_untracked`` is true,
-    new untracked ``.py`` files under ``src_root`` are included as well.
-    """
-    repo_root = repo_root.resolve()
-    src_root_abs = (
-        (repo_root / src_root).resolve()
-        if not src_root.is_absolute()
-        else src_root.resolve()
-    )
-    try:
-        src_rel = src_root_abs.relative_to(repo_root)
-    except ValueError:
-        return []
-
-    resolved_base = _resolve_base(repo_root, base)
-
-    raw: set[str] = set()
-    if resolved_base:
-        raw.update(
-            _run_git(["diff", "--name-only", resolved_base], cwd=repo_root).splitlines()
-        )
-    raw.update(_run_git(["diff", "--name-only"], cwd=repo_root).splitlines())
-    raw.update(
-        _run_git(["diff", "--name-only", "--cached"], cwd=repo_root).splitlines()
-    )
-
-    if include_untracked:
-        raw.update(
-            _run_git(
-                ["ls-files", "--others", "--exclude-standard"], cwd=repo_root
-            ).splitlines()
-        )
-
+    """Filter raw git paths down to existing ``.py`` files under ``src_rel``."""
     src_prefix = src_rel.as_posix() + "/"
     affected: set[Path] = set()
-    for raw_entry in raw:
+
+    for raw_entry in raw_entries:
         entry = raw_entry.strip()
         if not entry or not entry.endswith(".py"):
             continue
@@ -98,3 +60,57 @@ def affected_sources(
         affected.add(Path(entry))
 
     return sorted(affected)
+
+
+def affected_sources(
+    *,
+    repo_root: Path,
+    src_root: Path,
+    base: str = "merge-base:main",
+    include_untracked: bool = False,
+) -> list[Path]:
+    """Return repo-relative paths of affected ``.py`` files under ``src_root``.
+
+    Local staged/unstaged changes win outright. If any local change is present,
+    only the changed files from that local set are considered. Otherwise the
+    result falls back to the resolved base ref diff. When ``include_untracked``
+    is true, new untracked files are folded into the local set as well.
+    """
+    repo_root = repo_root.resolve()
+    src_root_abs = (
+        (repo_root / src_root).resolve()
+        if not src_root.is_absolute()
+        else src_root.resolve()
+    )
+    try:
+        src_rel = src_root_abs.relative_to(repo_root)
+    except ValueError:
+        return []
+
+    local_changes: set[str] = set()
+    local_changes.update(_run_git(["diff", "--name-only"], cwd=repo_root).splitlines())
+    local_changes.update(
+        _run_git(["diff", "--name-only", "--cached"], cwd=repo_root).splitlines()
+    )
+    if include_untracked:
+        local_changes.update(
+            _run_git(
+                ["ls-files", "--others", "--exclude-standard"], cwd=repo_root
+            ).splitlines()
+        )
+
+    if local_changes:
+        return _filter_affected_sources(
+            local_changes, repo_root=repo_root, src_rel=src_rel
+        )
+
+    resolved_base = _resolve_base(repo_root, base)
+    branch_changes: set[str] = set()
+    if resolved_base:
+        branch_changes.update(
+            _run_git(["diff", "--name-only", resolved_base], cwd=repo_root).splitlines()
+        )
+
+    return _filter_affected_sources(
+        branch_changes, repo_root=repo_root, src_rel=src_rel
+    )
