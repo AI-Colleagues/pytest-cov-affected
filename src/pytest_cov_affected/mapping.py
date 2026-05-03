@@ -35,10 +35,7 @@ def _expected_test_for(
     module_name = rel_inside_pkg.stem
     if module_name == "__init__":
         parent = rel_inside_pkg.parent
-        if parent == Path():
-            return None
-        test_name = f"test_{parent.name}.py"
-        return tests_root / parent.parent / test_name
+        return tests_root / parent / "test_init.py"
 
     parent = rel_inside_pkg.parent
     test_name = f"test_{module_name}.py"

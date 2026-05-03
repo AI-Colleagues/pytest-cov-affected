@@ -1,10 +1,17 @@
 """Tests for pytest_cov_affected.git."""
 
 from __future__ import annotations
+import importlib
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from pytest_cov_affected import git
+
+
+def test_git_module_can_be_reloaded_under_coverage() -> None:
+    reloaded = importlib.reload(git)
+
+    assert reloaded.__name__ == "pytest_cov_affected.git"
 
 
 def _commit(repo: Path, message: str) -> None:

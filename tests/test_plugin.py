@@ -1,6 +1,7 @@
 """Tests for pytest_cov_affected.plugin."""
 
 from __future__ import annotations
+import importlib
 import os
 import subprocess
 import sys
@@ -20,6 +21,12 @@ _COVERAGE_ENV_VARS = (
     "COVERAGE_RCFILE",
     "COVERAGE_RUN",
 )
+
+
+def test_plugin_module_can_be_reloaded_under_coverage() -> None:
+    reloaded = importlib.reload(plugin)
+
+    assert reloaded._STATE_KEY == "_cov_affected_state"
 
 
 class _DummyConfig:
