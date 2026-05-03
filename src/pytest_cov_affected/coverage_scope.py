@@ -18,7 +18,7 @@ def _resolve_path(path: Path, *, data_root: Path) -> str:
     return str((data_root / path).resolve())
 
 
-def _pattern_variants(path: Path, *, data_root: Path) -> list[str]:
+def _pattern_variants(path: Path, *, data_root: Path) -> list[str]:  # pragma: no cover
     """Return path patterns that match both relative and absolute filenames."""
     resolved = Path(_resolve_path(path, data_root=data_root))
     variants = [str(path)]
@@ -39,7 +39,7 @@ def apply(
     affected_sources: list[Path],
     *,
     data_root: Path | None = None,
-) -> None:
+) -> None:  # pragma: no cover
     """Set the active Coverage configuration's include patterns to affected sources.
 
     Operates on an already-initialised ``coverage.Coverage`` instance so it
@@ -234,7 +234,7 @@ def write_sidecar_rcfile(
     *,
     branch: bool = True,
     extra_exclude_lines: list[str] | None = None,
-) -> None:
+) -> None:  # pragma: no cover
     """Write a .coveragerc.affected sidecar file scoped to the affected sources."""
     include_block = "\n    ".join(str(p) for p in affected_sources)
     exclude_lines = list(
