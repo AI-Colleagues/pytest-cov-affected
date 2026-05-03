@@ -1,4 +1,4 @@
-from uv_template.main import main
+from pytest_cov_affected.main import main
 
 
 def test_main():
