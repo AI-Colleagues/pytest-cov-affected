@@ -32,6 +32,7 @@ class _State:
         self.cov_report: Any | None = None
         self.cov_obj: Any | None = None
         self.managed_cov: Any | None = None
+        self.finalized = False
 
 
 def _coverage_data_file_candidates(state: _State) -> list[Path]:
@@ -75,6 +76,17 @@ def _finalize_coverage_outputs(state: _State) -> None:
     coverage_scope.write_sidecar_rcfile(sidecar, abs_sources)
 
 
+def _finalize_coverage_state(state: _State) -> None:
+    """Finalize coverage data once, before terminal reporting runs."""
+    if state.finalized:
+        return
+    if state.managed_cov is not None:
+        state.managed_cov.stop()
+        state.managed_cov.save()
+    _finalize_coverage_outputs(state)
+    state.finalized = True
+
+
 def _start_managed_coverage(repo_root: Path, affected_sources: list[Path]) -> Any:
     """Start an internal coverage session when pytest-cov is not active."""
     import coverage
@@ -90,21 +102,50 @@ def _cov_report_options(config: pytest.Config) -> Any | None:
     return getattr(config.option, "cov_report", None)
 
 
-def _write_managed_coverage_report(terminalreporter: Any, state: _State) -> None:
-    """Emit a coverage report for the managed fallback coverage session."""
-    if state.managed_cov is None:
-        return
+def _managed_cov_report_requested(cov_report: Any) -> bool:
+    """Return whether managed coverage should render a terminal report."""
+    if not cov_report or not isinstance(cov_report, dict):
+        return False
+    return any(report_type in cov_report for report_type in ("term", "term-missing"))
 
-    cov_report = state.cov_report
-    if not cov_report:
-        return
 
-    if not isinstance(cov_report, dict):
-        cov_report = {}
+def _build_managed_report_cov(state: _State) -> Any:
+    """Build a fresh Coverage instance for managed terminal reporting."""
+    import coverage
 
-    if not any(report_type in cov_report for report_type in ("term", "term-missing")):
-        return
+    report_cov = coverage.Coverage(
+        data_file=str(state.repo_root / ".coverage"),
+        config_file=True,
+    )
+    coverage_scope.apply(
+        report_cov,
+        [state.repo_root / s for s in state.result.affected_sources],
+        data_root=state.repo_root,
+    )
+    try:
+        report_cov.load()
+    except Exception:
+        pass
+    return report_cov
 
+
+def _managed_cov_no_data_error() -> Any | None:
+    """Return coverage's NoDataError class when available."""
+    try:
+        from coverage import exceptions as coverage_exceptions
+    except Exception:  # pragma: no cover - coverage import layout varies
+        return None
+    else:
+        return getattr(coverage_exceptions, "NoDataError", None)
+
+
+def _emit_managed_coverage_report(
+    terminalreporter: Any,
+    report_cov: Any,
+    cov_report: Any,
+    no_data_error: Any | None,
+) -> None:
+    """Render the managed coverage report into the terminal reporter."""
     options: dict[str, Any] = {
         "show_missing": "term-missing" in cov_report or None,
         "ignore_errors": True,
@@ -114,11 +155,39 @@ def _write_managed_coverage_report(terminalreporter: Any, state: _State) -> None
     if skip_covered:
         options["skip_covered"] = True
 
-    state.managed_cov.report(**options)
+    try:
+        report_cov.report(**options)
+    except Exception as exc:
+        if no_data_error is None:
+            if exc.__class__.__name__ != "NoDataError":
+                raise
+        elif not isinstance(exc, no_data_error):
+            raise
+        terminalreporter.write_sep("-", "coverage: no data collected, skipping report")
+        return
     report = options["file"].getvalue()
     if report:
         terminalreporter.write_sep("-", "coverage:")
         terminalreporter.write("\n" + report + "\n")
+
+
+def _write_managed_coverage_report(terminalreporter: Any, state: _State) -> None:
+    """Emit a coverage report for the managed fallback coverage session."""
+    if state.managed_cov is None:
+        return
+
+    cov_report = state.cov_report
+    if not _managed_cov_report_requested(cov_report):
+        return
+
+    report_cov = _build_managed_report_cov(state)
+    no_data_error = _managed_cov_no_data_error()
+    _emit_managed_coverage_report(
+        terminalreporter,
+        report_cov,
+        cov_report,
+        no_data_error,
+    )
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -278,13 +347,21 @@ def pytest_terminal_summary(
     )
 
 
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Filter the .coverage data file and write the sidecar rcfile."""
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtestloop(session: pytest.Session) -> None:
+    """Finalize coverage data before pytest-cov renders its terminal report."""
+    yield
     config = session.config
     state: _State | None = getattr(config, _STATE_KEY, None)
     if state is None:
         return
-    if state.managed_cov is not None:
-        state.managed_cov.stop()
-        state.managed_cov.save()
-    _finalize_coverage_outputs(state)
+    _finalize_coverage_state(state)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Ensure coverage data is finalized even if runtestloop is bypassed."""
+    config = session.config
+    state: _State | None = getattr(config, _STATE_KEY, None)
+    if state is None:
+        return
+    _finalize_coverage_state(state)

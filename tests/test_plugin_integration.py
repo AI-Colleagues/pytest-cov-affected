@@ -155,6 +155,25 @@ def test_missing_test_warns_but_does_not_fail(pytester: pytest.Pytester) -> None
     result.stdout.fnmatch_lines(["*1 modules without tests*"])
 
 
+def test_no_data_does_not_print_traceback(pytester: pytest.Pytester) -> None:
+    repo = _seed_project(pytester)
+    subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=repo, check=True)
+    new_mod = repo / "src/proj/baz.py"
+    new_mod.write_text("def f():\n    return 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add baz"], cwd=repo, check=True)
+
+    result = pytester.runpytest(
+        "--cov-affected", "--cov-report", "term-missing", "-W", "always"
+    )
+    assert result.ret == 5
+    output = result.stdout.str()
+    assert "coverage:" in output
+    assert "src/proj/baz.py" in output
+    assert "Traceback" not in output
+    assert "NoDataError" not in output
+
+
 @pytest.mark.parametrize("extra_args", [(), ("--cov",)])
 def test_coverage_html_xml_only_contains_affected(
     pytester: pytest.Pytester,
@@ -244,6 +263,24 @@ def test_changed_init_module_is_reported(pytester: pytest.Pytester) -> None:
     result = pytester.runpytest(
         "--cov", "--cov-affected", "--cov-report", "term-missing"
     )
+
+    assert result.ret == 5
+    output = result.stdout.str()
+    assert "src/proj/__init__.py" in output
+
+
+def test_changed_init_module_appears_in_term_missing_without_cov(
+    pytester: pytest.Pytester,
+) -> None:
+    repo = _seed_project(pytester)
+    subprocess.run(["git", "checkout", "-q", "-b", "feature"], cwd=repo, check=True)
+    (repo / "src/proj/__init__.py").write_text('"""changed init"""\n')
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "touch init only"], cwd=repo, check=True
+    )
+
+    result = pytester.runpytest("--cov-affected", "--cov-report", "term-missing")
 
     assert result.ret == 5
     output = result.stdout.str()

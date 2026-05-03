@@ -4,6 +4,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
+from coverage.sqldata import CoverageData
 
 
 if TYPE_CHECKING:
@@ -70,41 +71,41 @@ def _abs_set(affected_sources: list[Path], data_root: Path) -> set[str]:
     return out
 
 
-def finalize(
-    data_file: Path, affected_sources: list[Path], *, data_root: Path | None = None
-) -> None:
-    """Filter the .coverage SQLite file in place to only retain affected files.
-
-    Removes ``file`` rows whose ``path`` is not in the affected set, plus any
-    ``line_bits``, ``arc``, and ``tracer`` rows that referenced those files.
-    No-op if ``data_file`` does not exist or has no ``file`` table.
-    """
-    if not data_file.exists():
-        return
-    if data_root is None:
-        data_root = data_file.parent
-
-    keep_abs = _abs_set(affected_sources, data_root)
-    if not keep_abs:
-        return
-
+def _coverage_file_rows(
+    data_file: Path, *, data_root: Path, keep_abs: set[str]
+) -> tuple[set[str], list[int]] | None:
+    """Return measured file paths and ids from a coverage database."""
     conn = sqlite3.connect(str(data_file))
     try:
         cur = conn.cursor()
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='file'")
         if cur.fetchone() is None:
-            return
+            return None
 
         cur.execute("SELECT id, path FROM file")
         rows = cur.fetchall()
-        drop_ids = []
-        for row_id, path in rows:
-            row_abs = _resolve_path(Path(path), data_root=data_root)
-            if row_abs not in keep_abs:
-                drop_ids.append(row_id)
-        if not drop_ids:
-            return
+    finally:
+        conn.close()
 
+    existing_abs: set[str] = set()
+    drop_ids: list[int] = []
+    for row_id, path in rows:
+        row_abs = _resolve_path(Path(path), data_root=data_root)
+        existing_abs.add(row_abs)
+        if row_abs not in keep_abs:
+            drop_ids.append(row_id)
+
+    return existing_abs, drop_ids
+
+
+def _delete_coverage_rows(data_file: Path, drop_ids: list[int]) -> None:
+    """Remove coverage rows for the given file ids."""
+    if not drop_ids:
+        return
+
+    conn = sqlite3.connect(str(data_file))
+    try:
+        cur = conn.cursor()
         placeholders = ",".join("?" for _ in drop_ids)
         cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {r[0] for r in cur.fetchall()}
@@ -118,6 +119,65 @@ def finalize(
         conn.commit()
     finally:
         conn.close()
+
+
+def _materialize_missing_files(data_file: Path, missing_files: list[str]) -> None:
+    """Add empty coverage rows for affected files that were not executed."""
+    if not missing_files:
+        return
+
+    coverage_data = CoverageData(basename=str(data_file))
+    try:
+        coverage_data.read()
+    except Exception:
+        return
+    if coverage_data.has_arcs():
+        coverage_data.touch_files(missing_files)
+    else:
+        try:
+            coverage_data.add_lines({filename: set() for filename in missing_files})
+        except Exception:
+            return
+    coverage_data.write()
+
+
+def finalize(
+    data_file: Path, affected_sources: list[Path], *, data_root: Path | None = None
+) -> None:
+    """Filter the .coverage data in place to only retain affected files.
+
+    Removes files outside the affected set and materializes affected files that
+    were never executed so later coverage reports still list them.
+    """
+    if not data_file.exists():
+        return
+    if data_root is None:
+        data_root = data_file.parent
+
+    keep_abs = _abs_set(affected_sources, data_root)
+    if not keep_abs:
+        return
+
+    rows = _coverage_file_rows(data_file, data_root=data_root, keep_abs=keep_abs)
+    if rows is None:
+        return
+    existing_abs, drop_ids = rows
+    _delete_coverage_rows(data_file, drop_ids)
+
+    missing_files: list[str] = []
+    seen_missing: set[str] = set()
+    for source in affected_sources:
+        source_abs = _resolve_path(source, data_root=data_root)
+        if source_abs in existing_abs:
+            continue
+        if source_abs not in seen_missing:
+            missing_files.append(source_abs)
+            seen_missing.add(source_abs)
+
+    if not missing_files:
+        return
+
+    _materialize_missing_files(data_file, missing_files)
 
 
 def write_sidecar_rcfile(
